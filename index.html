@@ -253,7 +253,17 @@
     .name-input::placeholder { color: rgba(100,80,160,0.28); font-weight: 600; }
 
     /* Voice grid */
-    .voice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .85rem; margin-bottom: 1.5rem; }
+    .voice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .85rem; margin-bottom: .85rem; }
+
+    /* TTS voice picker */
+    .tts-picker-section { margin-bottom: 1.25rem; }
+    .tts-section-label { font-size: .76rem; font-weight: 800; color: var(--text-b); text-transform: uppercase; letter-spacing: .07em; margin-bottom: .5rem; }
+    .tts-voice-row { display: flex; align-items: center; gap: .55rem; padding: .5rem .75rem; border-radius: 14px; background: rgba(255,255,255,0.58); border: 2px solid transparent; margin-bottom: .35rem; cursor: pointer; transition: all .18s; }
+    .tts-voice-row.selected { border-color: var(--c-main); background: rgba(196,167,231,0.16); }
+    .tts-voice-row:hover:not(.selected) { background: rgba(255,255,255,0.88); }
+    .tts-voice-name { flex: 1; font-size: .88rem; font-weight: 700; color: var(--text-h); }
+    .tts-preview-btn { background: none; border: 1.5px solid var(--c-main); color: var(--c-dark); border-radius: 50px; font-size: .75rem; font-weight: 800; padding: .2rem .65rem; cursor: pointer; font-family: inherit; transition: all .18s; flex-shrink: 0; white-space: nowrap; }
+    .tts-preview-btn:hover { background: var(--c-main); color: white; }
     .v-card { cursor: pointer; border-radius: 18px; padding: 1.15rem .85rem; background: rgba(255,255,255,0.52); border: 2.5px solid transparent; text-align: center; transition: all .22s; }
     .v-card:hover { background: rgba(255,255,255,0.88); transform: translateY(-3px); }
     .v-card.sel { border-color: var(--c-main); background: rgba(196,167,231,0.13); }
@@ -274,7 +284,9 @@
     .done-confetti { font-size: 2.8rem; margin-bottom: .5rem; animation: bounce .7s ease-in-out infinite alternate; }
     @keyframes bounce { to { transform: translateY(-12px); } }
     .done-name { font-size: 2.1rem; font-weight: 900; background: linear-gradient(135deg, var(--c-main) 0%, var(--c-accent) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: .3rem 0 .7rem; }
-    .done-msg { color: var(--text-b); font-size: .95rem; line-height: 1.65; margin-bottom: 2rem; font-weight: 600; }
+    .done-msg { color: var(--text-b); font-size: .95rem; line-height: 1.65; margin-bottom: 1.25rem; font-weight: 600; }
+    .btn-speak { background: rgba(255,255,255,0.72); border: 2px solid var(--c-main); color: var(--c-dark); margin-bottom: .85rem; }
+    .btn-speak:hover { background: rgba(255,255,255,0.92); transform: translateY(-2px); }
 
     /* Sparkle */
     @keyframes sparkleOut {
@@ -801,6 +813,10 @@
       <h2 class="step-title">Pick their vibe 🎵</h2>
       <p class="step-sub">How should they talk to you?</p>
       <div class="voice-grid" id="voice-grid"></div>
+      <div class="tts-picker-section">
+        <p class="tts-section-label">🎙 Speaking voice</p>
+        <div id="tts-voice-list"></div>
+      </div>
       <button class="btn btn-primary" id="btn-voice" disabled onclick="finishOnboarding()">Meet them! 🎉</button>
     </div>
   </div>
@@ -811,6 +827,7 @@
       <div class="preview-wrap preview-lg" id="preview-done"></div>
       <div class="done-name" id="done-name"></div>
       <p class="done-msg" id="done-msg"></p>
+      <button class="btn btn-speak" id="btn-speak-preview">🔊 Hear them speak</button>
       <button class="btn btn-primary" id="btn-lets-go">Let's go! →</button>
     </div>
   </div>
@@ -1039,7 +1056,7 @@
 // ═══════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════
-const state = { animal: null, color: null, accessory: 'none', name: '', voice: null, traits: {} };
+const state = { animal: null, color: null, accessory: 'none', name: '', voice: null, ttsVoice: null, traits: {} };
 
 // Chat history for AI (Anthropic messages format)
 let chatHistory = [];
@@ -2014,6 +2031,69 @@ function renderNameScreen() {
   setTimeout(() => inp.focus(), 350);
 }
 
+function cleanVoiceName(name) {
+  return name
+    .replace(/^Microsoft\s+/i, '')
+    .replace(/\s+Desktop$/i, '')
+    .replace(/\s+Online\s+\(Natural\)\s*-\s*English\s*\(.*?\)/i, '')
+    .replace(/\s+Online.*$/i, '')
+    .replace(/\s+\(.*?\)/g, '');
+}
+
+function getVoiceCandidates() {
+  const all = speechSynthesis.getVoices().filter(v => v.lang.startsWith('en'));
+  const preferred = ['Samantha','Karen','Moira','Tessa','Zira','Eva','Hazel','Google UK English Female','Google US English'];
+  const sorted = [...all].sort((a, b) => {
+    const ai = preferred.findIndex(n => a.name.includes(n));
+    const bi = preferred.findIndex(n => b.name.includes(n));
+    if (ai > -1 && bi > -1) return ai - bi;
+    if (ai > -1) return -1;
+    if (bi > -1) return 1;
+    return 0;
+  });
+  const seen = new Set();
+  return sorted.filter(v => {
+    const key = cleanVoiceName(v.name).toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  }).slice(0, 7);
+}
+
+function renderVoicePicker() {
+  const list = document.getElementById('tts-voice-list');
+  if (!list) return;
+  const candidates = getVoiceCandidates();
+  if (!candidates.length) {
+    list.innerHTML = '<p style="font-size:.8rem;color:var(--text-b);padding:.3rem 0">No voices found yet — try again in a moment.</p>';
+    return;
+  }
+  if (!state.ttsVoice) state.ttsVoice = candidates[0].name;
+  list.innerHTML = candidates.map(v => {
+    const clean = cleanVoiceName(v.name);
+    const safe = v.name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `<div class="tts-voice-row${state.ttsVoice === v.name ? ' selected' : ''}" onclick="selectTTSVoice('${safe}')">
+      <span class="tts-voice-name">${clean}</span>
+      <button class="tts-preview-btn" onclick="event.stopPropagation();previewTTSVoice('${safe}')">▶ Hear</button>
+    </div>`;
+  }).join('');
+}
+
+function selectTTSVoice(name) {
+  state.ttsVoice = name;
+  renderVoicePicker();
+}
+
+function previewTTSVoice(name) {
+  speechSynthesis.cancel();
+  const voice = speechSynthesis.getVoices().find(v => v.name === name);
+  if (!voice) return;
+  const utt = new SpeechSynthesisUtterance("Hi! I'm so happy to meet you.");
+  const cfg = { calm:{rate:.82,pitch:1.0}, bright:{rate:1.05,pitch:1.15}, wise:{rate:.88,pitch:1.0}, playful:{rate:1.08,pitch:1.18} };
+  const s = cfg[state.voice] || cfg.calm;
+  utt.voice = voice; utt.rate = s.rate; utt.pitch = s.pitch; utt.volume = 0.92;
+  speechSynthesis.speak(utt);
+}
+
 function renderVoiceScreen() {
   document.getElementById('voice-grid').innerHTML = VOICES.map(v => `
     <div class="v-card${state.voice === v.id ? ' sel' : ''}" onclick="selectVoice('${v.id}', event)">
@@ -2024,6 +2104,11 @@ function renderVoiceScreen() {
   `).join('');
   document.getElementById('btn-voice').disabled = !state.voice;
   stepDots('s-voice', 'steps-voice');
+  if (speechSynthesis.getVoices().length) {
+    renderVoicePicker();
+  } else {
+    speechSynthesis.onvoiceschanged = () => { speechSynthesis.onvoiceschanged = null; renderVoicePicker(); };
+  }
 }
 
 function selectVoice(id, e) {
@@ -2050,6 +2135,8 @@ function finishOnboarding() {
   document.getElementById('done-name').textContent = name;
   document.getElementById('done-msg').textContent =
     (DONE_MSGS[state.voice] || (n => `${n} is ready to be your companion.`))(name);
+  const greeting = (ANIMAL_GREETINGS[state.animal] || ANIMAL_GREETINGS.bear)(name);
+  document.getElementById('btn-speak-preview').onclick = () => speakText(greeting);
   document.getElementById('btn-lets-go').onclick = goToApp;
   showScreen('s-done');
   setTimeout(burstCelebration, 180);
@@ -2325,16 +2412,49 @@ function toggleTTS() {
   if (!ttsEnabled) speechSynthesis.cancel();
 }
 
+function pickVoice() {
+  const voices = speechSynthesis.getVoices();
+  if (!voices.length) return null;
+  if (state.ttsVoice) {
+    const saved = voices.find(v => v.name === state.ttsVoice);
+    if (saved) return saved;
+  }
+  const preferred = [
+    'Samantha', 'Karen', 'Moira', 'Tessa',
+    'Zira', 'Eva', 'Hazel',
+    'Google UK English Female',
+    'Google US English',
+  ];
+  for (const name of preferred) {
+    const v = voices.find(v => v.name.includes(name));
+    if (v) return v;
+  }
+  const female = voices.find(v => v.lang.startsWith('en') && /female|zira|samantha|karen/i.test(v.name));
+  if (female) return female;
+  return voices.find(v => v.lang.startsWith('en')) || voices[0];
+}
+
 function speakText(text) {
   if (!ttsEnabled || !window.speechSynthesis) return;
   speechSynthesis.cancel();
-  // Strip emoji before speaking
   const clean = text.replace(/[\u{1F000}-\u{1FFFF}]|[\u{2600}-\u{27FF}]|[\u{FE00}-\u{FEFF}]/gu, '').trim();
   const utt = new SpeechSynthesisUtterance(clean);
-  const cfg = { calm:{rate:.85,pitch:.95}, bright:{rate:1.1,pitch:1.2}, wise:{rate:.88,pitch:1.0}, playful:{rate:1.05,pitch:1.12} };
+  const cfg = {
+    calm:    { rate: .82, pitch: 1.0 },
+    bright:  { rate: 1.05, pitch: 1.15 },
+    wise:    { rate: .88, pitch: 1.0 },
+    playful: { rate: 1.08, pitch: 1.18 },
+  };
   const s = cfg[state.voice] || cfg.calm;
-  utt.rate = s.rate; utt.pitch = s.pitch; utt.volume = 0.9;
-  speechSynthesis.speak(utt);
+  utt.rate = s.rate; utt.pitch = s.pitch; utt.volume = 0.92;
+  // Voices may not be loaded yet — wait if needed
+  const setAndSpeak = () => {
+    const v = pickVoice();
+    if (v) utt.voice = v;
+    speechSynthesis.speak(utt);
+  };
+  if (speechSynthesis.getVoices().length) setAndSpeak();
+  else { speechSynthesis.onvoiceschanged = () => { speechSynthesis.onvoiceschanged = null; setAndSpeak(); }; }
 }
 
 // ═══════════════════════════════════════════════════
